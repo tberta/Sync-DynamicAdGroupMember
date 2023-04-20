@@ -1,4 +1,5 @@
-﻿<#
+﻿[CmdletBinding(SupportsShouldProcess)]
+<#
     .SYNOPSIS
     Manages AD group members based on Get-ADUser filter query defined in an extensionAttribute
 
@@ -89,9 +90,6 @@ param (
     # Specifies the Active Directory Domain Services instance to connect to
     [string]$Server,
 
-    # Shows what would happen if the cmdlet runs
-    [switch]$WhatIf,
-
     # Returns the group, its Get-ADUser filter query, user and modification type as PSCustomObject.
     [switch]$PassThru
 )
@@ -170,23 +168,9 @@ foreach ($Group in $AdGroups) {
     $MissingMembers = $MembersQuery | Where-Object { $MembersCurrent.SID -notcontains $_.SID }
     $ObsoleteMembers = $MembersCurrent | Where-Object { $MembersQuery.SID -notcontains $_.SID }
 
-    # Handle WhatIf
-    if ($WhatIf) {
-
-        # Add missing members (WhatIf)
-        foreach ($Member in $MissingMembers) {
-            Write-Host "What if: $($Group.Name): (+) $($Member.SamAccountName)"
-        }
-
-        # Remove missing members (WhatIf)
-        foreach ($Member in $ObsoleteMembers) {
-            Write-Host "What if: $($Group.Name): (-) $($Member.SamAccountName)"
-        }    
-    }
-    else {
-
-        # Add missing members
-        foreach ($Member in $MissingMembers) {
+    # Add missing members
+    foreach ($Member in $MissingMembers) {
+        If ($PSCmdlet.ShouldProcess($Member.SamAccountName, "Add user to $($Group.Name)")) {
             Write-Verbose "$($Group.Name): (+) $($Member.SamAccountName)"
             Add-ADGroupMember -Identity $Group.Name -Members $Member -Confirm:$false -Server $Server
 
@@ -200,9 +184,11 @@ foreach ($Group in $AdGroups) {
                 }
             }
         }
+    }
 
-        # Remove missing members
-        foreach ($Member in $ObsoleteMembers) {
+    # Remove missing members
+    foreach ($Member in $ObsoleteMembers) {
+        If ($PSCmdlet.ShouldProcess($Member.SamAccountName, "Remove user from $($Group.Name)")) {
             Write-Verbose "$($Group.Name): (-) $($Member.SamAccountName)"
             Remove-ADGroupMember -Identity $Group.Name -Members $Member -Confirm:$false -Server $Server
             
