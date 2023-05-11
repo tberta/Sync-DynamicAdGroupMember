@@ -158,6 +158,8 @@ foreach ($Group in $AdGroups) {
     # Output for reference
     Write-Verbose "$($Group.Name): $($Group.$ExtensionAttributeString)"
 
+    $Start = Get-Date
+
     # Fetch AD users from query
     $MembersQuery = Get-ADUser -Filter $Group.$ExtensionAttributeString -Server $Server -SearchBase $UserSearchBase | Sort-Object SamAccountName
 
@@ -203,5 +205,9 @@ foreach ($Group in $AdGroups) {
             }
         }
     }
+
+    $End = Get-Date
+    $TS = $End - $Start
+    Write-Verbose -Message $TS.ToString()
 }
 #endregion Syncing group members
