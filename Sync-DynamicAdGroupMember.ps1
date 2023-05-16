@@ -81,11 +81,24 @@ param (
     [ValidateRange(1, 15)]
     [int]$ExtensionAttribute,
 
+    # extensionAttribute that is used to define Where-Object filter queries
+    [Alias('WhereFilterEA')]
+    [ValidateRange(1, 15)]
+    [int]$WhereFilterExtensionAttribute,
+
     # Specifies an Active Directory path to search for groups
     [string]$GroupSearchBase,
 
+    # Specifies an Active Directory group name to update
+    [string]$GroupName,
+
     # Specifies an Active Directory path to search for users
     [string]$UserSearchBase,
+
+    # extensionAttribute that is used to define OU
+    [Alias('UserSearchBaseEA')]
+    [ValidateRange(1, 15)]
+    [int]$UserSearchBaseExtensionAttribute,
 
     # Specifies the Active Directory Domain Services instance to connect to
     [string]$Server,
@@ -107,7 +120,7 @@ if (-not (Get-Module -Name ActiveDirectory -ListAvailable)) {
 
 # Determine domain controller to use for AD cmdlets (if $Server is not set)
 if (-not $Server) {
-    $Server = (Get-ADDomainController -Discover).HostName
+    $Server = [String] (Get-ADDomainController -Discover).HostName
 }
 if (-not $Server) {
     throw "No AD domain controller was found"
@@ -115,7 +128,7 @@ if (-not $Server) {
 
 
 # Test connection to server
-if (-not (Test-ComputerSecureChannel -Server $Server)) {
+if (-not (Test-ComputerSecureChannel -Server $Server -WhatIf:$false)) {
     throw "Connection to $Server failed"
 }
 
@@ -130,7 +143,17 @@ if (-not $UserSearchBase) {
 }
 
 # Store extensionAttribute as string
-[string]$ExtensionAttributeString = "extensionAttribute" + $ExtensionAttribute
+$ExtensionAttributeString = "extensionAttribute" + $ExtensionAttribute
+
+If ($WhereFilterExtensionAttribute) {
+    $WhereFilterAttributeString = "extensionAttribute" + $WhereFilterExtensionAttribute
+}
+If ($UserSearchBaseExtensionAttribute) {
+    $UserSearchBaseAttributeString = "extensionAttribute" + $UserSearchBaseExtensionAttribute
+}
+$Properties = $ExtensionAttributeString, $WhereFilterAttributeString, $UserSearchBaseAttributeString | Where-Object { $_ -ne $null }
+
+# TODO : Test extensionAttribute uniqueness
 #endregion Checking dependencies
 
 
@@ -143,7 +166,12 @@ $Params = @{
     SearchBase = $GroupSearchBase
     Filter     = "$ExtensionAttributeString -like '*'"
     Server     = $Server
-    Properties = $ExtensionAttributeString
+    Properties = $Properties | Where-Object { $_ }
+}
+If ($GroupName) { 
+    $Params.Add('Identity', $GroupName)
+    $Params.Remove('Filter')
+    $Params.Remove('SearchBase')
 }
 [array]$AdGroups = Get-ADGroup @Params | Sort-Object Name
 #endregion Fetching AD groups with extensionAttribute set
@@ -152,6 +180,9 @@ $Params = @{
 # -------------------------------------------------------------------------------------------------------------- #
 #region Syncing group members
 Write-Verbose "Syncing group members"
+If ($WhereFilterAttributeString) {
+    $AllADUserProperties = Get-ADUser -Filter * -SearchBase $UserSearchBase -Properties * -ResultSetSize 1 | Select-Object -ExpandProperty PropertyNames 
+}
 
 foreach ($Group in $AdGroups) {
 
@@ -161,8 +192,26 @@ foreach ($Group in $AdGroups) {
     $Start = Get-Date
 
     # Fetch AD users from query
-    $MembersQuery = Get-ADUser -Filter $Group.$ExtensionAttributeString -Server $Server -SearchBase $UserSearchBase | Sort-Object SamAccountName
-
+    $GetParams = @{
+        Filter = $Group.$ExtensionAttributeString 
+        Server = $Server
+        SearchBase = If ($UserSearchBaseAttributeString -and -not [String]::IsNullOrEmpty($Group.$UserSearchBaseAttributeString)) { 
+            $Group.$UserSearchBaseAttributeString 
+        } Else { 
+            $UserSearchBase 
+        }
+    }
+    If ($WhereFilterAttributeString -and -not [String]::IsNullOrEmpty($Group.$WhereFilterAttributeString)) {
+        $ADUserProperties = $AllADUserProperties | ForEach-Object { If (Select-String -InputObject $Group.$WhereFilterAttributeString -Pattern $_ -SimpleMatch) { $_ } }
+        If ($ADUserProperties) {
+            $GetParams.Add('Property', $ADUserProperties)
+        }
+    }
+    $MembersQuery = Get-ADUser @GetParams | Sort-Object SamAccountName
+    
+    If ($WhereFilterAttributeString -and $Group.$WhereFilterAttributeString) {
+        $MembersQuery = $MembersQuery | Where-Object -FilterScript ([ScriptBlock]::Create($Group.$WhereFilterAttributeString)) 
+    }
     # Fetch current members of AD group
     $MembersCurrent = $Group | Get-ADGroupMember -Server $Server | Sort-Object SamAccountName
 
