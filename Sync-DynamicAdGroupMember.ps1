@@ -40,7 +40,7 @@
     VERBOSE: role-department-sales: (+) john.doe
     VERBOSE: role-department-sales: (+) sam.smith
     VERBOSE: role-department-sales: (-) tom.tonkins
-    
+
     .EXAMPLE
     Provides output of sync changes but does not actually perform them.
 
@@ -49,7 +49,7 @@
     What if: role-department-sales: (+) john.doe
     What if: role-department-sales: (+) sam.smith
     What if: role-department-sales: (-) tom.tonkins
-    
+
     .EXAMPLE
     Provides output of sync changes but does not actually perform them, with additional output.
 
@@ -63,7 +63,7 @@
     What if: role-department-sales: (+) john.doe
     What if: role-department-sales: (+) sam.smith
     What if: role-department-sales: (-) tom.tonkins
-    
+
     .EXAMPLE
     Only consideres the OU "OU=groups,DC=contoso,DC=com" looking for groups with extensionAttribute10 set.
     Only consideres the OU "OU=users,DC=contoso,DC=com" looking for users when executing the Get-ADUser filter query.
@@ -92,12 +92,14 @@ param (
     # Specifies an Active Directory group name to update
     [string]$GroupName,
 
-    # Specifies an Active Directory path to search for users
+    # Specifies an Active Directory OU DistinguishedName to use for Users SearchBase
+    [parameter(ParameterSetName = "UserSearchBase")]
     [string]$UserSearchBase,
 
-    # extensionAttribute that is used to define OU
+    # Specifies the Active Directory group attribute to use for Users SearchBase
     [Alias('UserSearchBaseEA')]
     [ValidateRange(1, 15)]
+    [parameter(ParameterSetName = "UserSearchAttribute")]
     [int]$UserSearchBaseExtensionAttribute,
 
     # Specifies the Active Directory Domain Services instance to connect to
@@ -168,7 +170,7 @@ $Params = @{
     Server     = $Server
     Properties = $Properties | Where-Object { $_ }
 }
-If ($GroupName) { 
+If ($GroupName) {
     $Params.Add('Identity', $GroupName)
     $Params.Remove('Filter')
     $Params.Remove('SearchBase')
@@ -181,7 +183,7 @@ If ($GroupName) {
 #region Syncing group members
 Write-Verbose "Syncing group members"
 If ($WhereFilterAttributeString) {
-    $AllADUserProperties = Get-ADUser -Filter * -SearchBase $UserSearchBase -Properties * -ResultSetSize 1 | Select-Object -ExpandProperty PropertyNames 
+    $AllADUserProperties = Get-ADUser -Filter * -SearchBase $UserSearchBase -Properties * -ResultSetSize 1 | Select-Object -ExpandProperty PropertyNames
 }
 
 foreach ($Group in $AdGroups) {
@@ -193,12 +195,12 @@ foreach ($Group in $AdGroups) {
 
     # Fetch AD users from query
     $GetParams = @{
-        Filter = $Group.$ExtensionAttributeString 
+        Filter = $Group.$ExtensionAttributeString
         Server = $Server
-        SearchBase = If ($UserSearchBaseAttributeString -and -not [String]::IsNullOrEmpty($Group.$UserSearchBaseAttributeString)) { 
-            $Group.$UserSearchBaseAttributeString 
-        } Else { 
-            $UserSearchBase 
+        SearchBase = If ($UserSearchBaseAttributeString -and -not [String]::IsNullOrEmpty($Group.$UserSearchBaseAttributeString)) {
+            $Group.$UserSearchBaseAttributeString
+        } Else {
+            $UserSearchBase
         }
     }
     If ($WhereFilterAttributeString -and -not [String]::IsNullOrEmpty($Group.$WhereFilterAttributeString)) {
@@ -208,9 +210,9 @@ foreach ($Group in $AdGroups) {
         }
     }
     $MembersQuery = Get-ADUser @GetParams | Sort-Object SamAccountName
-    
+
     If ($WhereFilterAttributeString -and $Group.$WhereFilterAttributeString) {
-        $MembersQuery = $MembersQuery | Where-Object -FilterScript ([ScriptBlock]::Create($Group.$WhereFilterAttributeString)) 
+        $MembersQuery = $MembersQuery | Where-Object -FilterScript ([ScriptBlock]::Create($Group.$WhereFilterAttributeString))
     }
     # Fetch current members of AD group
     $MembersCurrent = $Group | Get-ADGroupMember -Server $Server | Sort-Object SamAccountName
@@ -222,7 +224,6 @@ foreach ($Group in $AdGroups) {
     # Add missing members
     foreach ($Member in $MissingMembers) {
         If ($PSCmdlet.ShouldProcess($Member.SamAccountName, "Add user to $($Group.Name)")) {
-            Write-Verbose "$($Group.Name): (+) $($Member.SamAccountName)"
             Add-ADGroupMember -Identity $Group.Name -Members $Member -Confirm:$false -Server $Server
 
             # Provide output in case $PassThru is set
@@ -240,9 +241,8 @@ foreach ($Group in $AdGroups) {
     # Remove missing members
     foreach ($Member in $ObsoleteMembers) {
         If ($PSCmdlet.ShouldProcess($Member.SamAccountName, "Remove user from $($Group.Name)")) {
-            Write-Verbose "$($Group.Name): (-) $($Member.SamAccountName)"
             Remove-ADGroupMember -Identity $Group.Name -Members $Member -Confirm:$false -Server $Server
-            
+
             # Provide output in case $PassThru is set
             if ($PassThru) {
                 [PSCustomObject]@{
